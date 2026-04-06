@@ -4,12 +4,28 @@
 // license that can be found in the LICENSE file or at
 // https://opensource.org/licenses/MIT.
 
+#[cfg(not(target_os = "wasi"))]
 use onig::{Regex, RegexOptions, Syntax};
 
+#[cfg(target_os = "wasi")]
+use regex::Regex;
+
 /// Parse a string as a POSIX Basic Regular Expression.
+#[cfg(not(target_os = "wasi"))]
 fn parse_bre(expr: &str, options: RegexOptions) -> Result<Regex, onig::Error> {
     let bre = Syntax::posix_basic();
     Regex::with_options(expr, bre.options() | options, bre)
+}
+
+/// Fallback BRE parser for WASI using the regex crate (limited compatibility).
+#[cfg(target_os = "wasi")]
+fn parse_bre(expr: &str, case_insensitive: bool) -> Result<Regex, regex::Error> {
+    let pattern = if case_insensitive {
+        format!("(?i){expr}")
+    } else {
+        expr.to_string()
+    };
+    Regex::new(&pattern)
 }
 
 /// Push a literal character onto a regex, escaping it if necessary.
@@ -104,7 +120,11 @@ fn extract_bracket_expr(pattern: &str) -> Option<(String, &str)> {
         next = chars.next();
     }
 
-    if parse_bre(&expr, RegexOptions::REGEX_OPTION_NONE).is_ok() {
+    #[cfg(not(target_os = "wasi"))]
+    let bre_ok = parse_bre(&expr, RegexOptions::REGEX_OPTION_NONE).is_ok();
+    #[cfg(target_os = "wasi")]
+    let bre_ok = parse_bre(&expr, false).is_ok();
+    if bre_ok {
         Some((expr, chars.as_str()))
     } else {
         None
@@ -158,14 +178,17 @@ pub struct Pattern {
 impl Pattern {
     /// Parse an fnmatch()-style glob.
     pub fn new(pattern: &str, caseless: bool) -> Self {
-        let options = if caseless {
-            RegexOptions::REGEX_OPTION_IGNORECASE
-        } else {
-            RegexOptions::REGEX_OPTION_NONE
+        #[cfg(not(target_os = "wasi"))]
+        let regex = {
+            let options = if caseless {
+                RegexOptions::REGEX_OPTION_IGNORECASE
+            } else {
+                RegexOptions::REGEX_OPTION_NONE
+            };
+            glob_to_regex(pattern).map(|r| parse_bre(&r, options).unwrap())
         };
-
-        // As long as glob_to_regex() is correct, this should never fail
-        let regex = glob_to_regex(pattern).map(|r| parse_bre(&r, options).unwrap());
+        #[cfg(target_os = "wasi")]
+        let regex = glob_to_regex(pattern).map(|r| parse_bre(&r, caseless).unwrap());
         Self { regex }
     }
 

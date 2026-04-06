@@ -17,7 +17,9 @@ use tempfile::Builder;
 use common::test_helpers::{
     fix_up_slashes, get_dir_entry_for, path_to_testing_commandline, FakeDependencies,
 };
-use findutils::find::matchers::exec::{MultiExecMatcher, SingleExecMatcher};
+#[cfg(unix)]
+use findutils::find::matchers::exec::MultiExecMatcher;
+use findutils::find::matchers::exec::SingleExecMatcher;
 use findutils::find::matchers::{Matcher, MatcherIO};
 
 mod common;
@@ -225,6 +227,7 @@ fn matching_fails_if_executable_fails() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn matching_multi_executes_code() {
     let temp_dir = Builder::new()
@@ -258,6 +261,7 @@ fn matching_multi_executes_code() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn execdir_multi_in_current_directory() {
     let temp_dir = Builder::new()
@@ -292,6 +296,7 @@ fn execdir_multi_in_current_directory() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn multi_set_exit_code_if_executable_fails() {
     let temp_dir = Builder::new()
@@ -326,6 +331,7 @@ fn multi_set_exit_code_if_executable_fails() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn multi_set_exit_code_if_command_fails() {
     let abbbc = get_dir_entry_for("test_data/simple", "abbbc");

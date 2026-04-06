@@ -6,12 +6,20 @@
 use super::{Follow, Matcher, MatcherIO, WalkEntry, WalkError};
 use std::error::Error;
 use std::path::Path;
+#[cfg(unix)]
 use uucore::fs::FileInformation;
 
+#[cfg(unix)]
 pub struct SameFileMatcher {
     info: FileInformation,
 }
 
+#[cfg(not(unix))]
+pub struct SameFileMatcher {
+    _path: std::path::PathBuf,
+}
+
+#[cfg(unix)]
 /// Gets FileInformation, possibly following symlinks, but falling back on
 /// broken links.
 fn get_file_info(path: &Path, follow: bool) -> Result<FileInformation, WalkError> {
@@ -28,6 +36,7 @@ fn get_file_info(path: &Path, follow: bool) -> Result<FileInformation, WalkError
     Ok(FileInformation::from_path(path, false)?)
 }
 
+#[cfg(unix)]
 impl SameFileMatcher {
     pub fn new(path: impl AsRef<Path>, follow: Follow) -> Result<Self, Box<dyn Error>> {
         let info = get_file_info(path.as_ref(), follow != Follow::Never)?;
@@ -35,13 +44,28 @@ impl SameFileMatcher {
     }
 }
 
+#[cfg(not(unix))]
+impl SameFileMatcher {
+    pub fn new(path: impl AsRef<Path>, _follow: Follow) -> Result<Self, Box<dyn Error>> {
+        Ok(Self {
+            _path: path.as_ref().to_path_buf(),
+        })
+    }
+}
+
 impl Matcher for SameFileMatcher {
+    #[cfg(unix)]
     fn matches(&self, file_info: &WalkEntry, _matcher_io: &mut MatcherIO) -> bool {
         if let Ok(info) = get_file_info(file_info.path(), file_info.follow()) {
             info == self.info
         } else {
             false
         }
+    }
+
+    #[cfg(not(unix))]
+    fn matches(&self, _file_info: &WalkEntry, _matcher_io: &mut MatcherIO) -> bool {
+        false
     }
 }
 

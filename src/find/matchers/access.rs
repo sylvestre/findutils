@@ -4,6 +4,7 @@
 // license that can be found in the LICENSE file or at
 // https://opensource.org/licenses/MIT.
 
+#[cfg(unix)]
 use faccess::PathExt;
 
 use super::{Matcher, MatcherIO, WalkEntry};
@@ -16,6 +17,7 @@ pub enum AccessMatcher {
 }
 
 impl Matcher for AccessMatcher {
+    #[cfg(unix)]
     fn matches(&self, file_info: &WalkEntry, _: &mut MatcherIO) -> bool {
         let path = file_info.path();
 
@@ -24,6 +26,11 @@ impl Matcher for AccessMatcher {
             Self::Writable => path.writable(),
             Self::Executable => path.executable(),
         }
+    }
+
+    #[cfg(not(unix))]
+    fn matches(&self, _file_info: &WalkEntry, _: &mut MatcherIO) -> bool {
+        false
     }
 }
 

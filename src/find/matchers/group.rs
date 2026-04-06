@@ -31,7 +31,7 @@ impl GroupMatcher {
         Self { gid }
     }
 
-    #[cfg(windows)]
+    #[cfg(not(unix))]
     pub fn from_group_name(_group: &str) -> Option<Self> {
         None
     }
@@ -46,10 +46,8 @@ impl Matcher for GroupMatcher {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(not(unix))]
     fn matches(&self, _file_info: &WalkEntry, _: &mut MatcherIO) -> bool {
-        // The user group acquisition function for Windows systems is not implemented in MetadataExt,
-        // so it is somewhat difficult to implement it. :(
         false
     }
 }
@@ -80,7 +78,7 @@ impl Matcher for NoGroupMatcher {
         false
     }
 
-    #[cfg(windows)]
+    #[cfg(not(unix))]
     fn matches(&self, _file_info: &WalkEntry, _: &mut MatcherIO) -> bool {
         false
     }

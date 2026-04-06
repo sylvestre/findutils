@@ -490,9 +490,12 @@ fn format_directive<'entry>(
             .unwrap()
             .to_string_lossy(),
 
+        #[cfg(unix)]
         FormatDirective::Permissions(PermissionsFormat::Symbolic) => {
             uucore::fs::display_permissions(meta()?, true).into()
         }
+        #[cfg(not(unix))]
+        FormatDirective::Permissions(PermissionsFormat::Symbolic) => "?????????".into(),
         #[cfg(not(unix))]
         FormatDirective::Permissions(PermissionsFormat::Octal) => "777".into(),
         #[cfg(unix)]

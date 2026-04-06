@@ -14,7 +14,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-use clap::{crate_version, error::ErrorKind, Arg, ArgAction};
+use clap::{error::ErrorKind, Arg, ArgAction};
 
 mod options {
     pub const COMMAND: &str = "COMMAND";
@@ -145,6 +145,12 @@ fn count_osstr_chars_for_exec(s: &OsStr) -> usize {
     s.encode_wide().count() + 1
 }
 
+#[cfg(target_os = "wasi")]
+fn count_osstr_chars_for_exec(s: &OsStr) -> usize {
+    // WASI OsStr is similar to Unix - byte-based.
+    s.len() + 1
+}
+
 #[cfg(unix)]
 fn count_osstr_chars_for_exec(s: &OsStr) -> usize {
     use std::os::unix::ffi::OsStrExt;
@@ -166,9 +172,9 @@ impl MaxCharsCommandSizeLimiter {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(not(unix))]
     fn new_system(_env: &HashMap<OsString, OsString>) -> MaxCharsCommandSizeLimiter {
-        // Taken from the CreateProcess docs.
+        // Conservative default for non-Unix platforms.
         const MAX_CMDLINE: usize = 32767;
         MaxCharsCommandSizeLimiter::new(MAX_CMDLINE)
     }
@@ -891,7 +897,7 @@ fn normalize_options(options: Options, matches: &clap::ArgMatches) -> Options {
 
 fn do_xargs(args: &[&str]) -> Result<CommandResult, XargsError> {
     let matches = clap::Command::new("xargs")
-        .version(crate_version!())
+        .version(env!("CARGO_PKG_VERSION"))
         .about("Run commands using arguments derived from standard input")
         .arg(
             Arg::new(options::COMMAND)

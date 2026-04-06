@@ -31,7 +31,7 @@ impl UserMatcher {
         Self { uid }
     }
 
-    #[cfg(windows)]
+    #[cfg(not(unix))]
     pub fn from_user_name(_user: &str) -> Option<Self> {
         None
     }
@@ -46,7 +46,7 @@ impl Matcher for UserMatcher {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(not(unix))]
     fn matches(&self, _file_info: &WalkEntry, _: &mut MatcherIO) -> bool {
         false
     }
@@ -78,7 +78,7 @@ impl Matcher for NoUserMatcher {
         false
     }
 
-    #[cfg(windows)]
+    #[cfg(not(unix))]
     fn matches(&self, _file_info: &WalkEntry, _: &mut MatcherIO) -> bool {
         false
     }

@@ -65,6 +65,16 @@ jobs:
       - run: |
           cargo clippy --all-targets -- -D warnings
 
+  wasi:
+    name: WASI build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Add wasm32-wasip1 target
+        run: rustup target add wasm32-wasip1
+      - name: Build for WASI
+        run: cargo build --target wasm32-wasip1
+
   grcov:
     name: Code coverage
     runs-on: ${{ matrix.os }}

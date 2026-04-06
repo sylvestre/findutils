@@ -3,6 +3,9 @@
 // Use of this source code is governed by a MIT-style
 // license that can be found in the LICENSE file or at
 // https://opensource.org/licenses/MIT.
+//
+// Note: This module requires the `onig` crate which does not compile for WASI.
+// It is gated with #[cfg(not(target_os = "wasi"))] in mod.rs.
 
 use std::{error::Error, fmt, str::FromStr};
 

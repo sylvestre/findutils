@@ -22,6 +22,7 @@ mod printer;
 mod printf;
 mod prune;
 mod quit;
+#[cfg(not(target_os = "wasi"))]
 mod regex;
 mod samefile;
 mod size;
@@ -34,7 +35,9 @@ mod user;
 use self::access::AccessMatcher;
 use self::delete::DeleteMatcher;
 use self::empty::EmptyMatcher;
-use self::exec::{MultiExecMatcher, SingleExecMatcher};
+#[cfg(unix)]
+use self::exec::MultiExecMatcher;
+use self::exec::SingleExecMatcher;
 use self::group::{GroupMatcher, NoGroupMatcher};
 use self::lname::LinkNameMatcher;
 use self::logical_matchers::{
@@ -47,6 +50,7 @@ use self::printer::{PrintDelimiter, Printer};
 use self::printf::Printf;
 use self::prune::PruneMatcher;
 use self::quit::QuitMatcher;
+#[cfg(not(target_os = "wasi"))]
 use self::regex::RegexMatcher;
 use self::samefile::SameFileMatcher;
 use self::size::SizeMatcher;
@@ -440,6 +444,7 @@ fn build_matcher_tree(
 ) -> Result<(usize, Box<dyn Matcher>), Box<dyn Error>> {
     let mut top_level_matcher = ListMatcherBuilder::new();
 
+    #[cfg(not(target_os = "wasi"))]
     let mut regex_type = regex::RegexType::default();
 
     // can't use getopts for a variety or reasons:
@@ -524,6 +529,7 @@ fn build_matcher_tree(
                 Some(PathMatcher::new(args[i], args[i - 1].starts_with("-i")).into_box())
             }
             "-readable" => Some(AccessMatcher::Readable.into_box()),
+            #[cfg(not(target_os = "wasi"))]
             "-regextype" => {
                 if i >= args.len() - 1 {
                     return Err(From::from(format!("missing argument to {}", args[i])));
@@ -532,6 +538,7 @@ fn build_matcher_tree(
                 regex_type = regex::RegexType::from_str(args[i])?;
                 Some(TrueMatcher.into_box())
             }
+            #[cfg(not(target_os = "wasi"))]
             "-regex" => {
                 if i >= args.len() - 1 {
                     return Err(From::from(format!("missing argument to {}", args[i])));
@@ -539,6 +546,7 @@ fn build_matcher_tree(
                 i += 1;
                 Some(RegexMatcher::new(regex_type, args[i], false)?.into_box())
             }
+            #[cfg(not(target_os = "wasi"))]
             "-iregex" => {
                 if i >= args.len() - 1 {
                     return Err(From::from(format!("missing argument to {}", args[i])));
@@ -651,14 +659,23 @@ fn build_matcher_tree(
                     ),
                     "+" => {
                         if exec_args.iter().filter(|x| matches!(**x, "{}")).count() == 1 {
-                            Some(
-                                MultiExecMatcher::new(
-                                    executable,
-                                    &exec_args[0..exec_args.len() - 1],
-                                    expression == "-execdir",
-                                )?
-                                .into_box(),
-                            )
+                            #[cfg(unix)]
+                            {
+                                Some(
+                                    MultiExecMatcher::new(
+                                        executable,
+                                        &exec_args[0..exec_args.len() - 1],
+                                        expression == "-execdir",
+                                    )?
+                                    .into_box(),
+                                )
+                            }
+                            #[cfg(not(unix))]
+                            {
+                                return Err(From::from(
+                                    "-exec ... + is not supported on this platform",
+                                ));
+                            }
                         } else {
                             return Err(From::from(
                                 "Only one instance of {} is supported with -execdir ... +",

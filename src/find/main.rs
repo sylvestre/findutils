@@ -8,6 +8,7 @@ fn main() {
     // Ignores the SIGPIPE signal.
     // This is to solve the problem that when find is used with a pipe character,
     // the downstream software of the standard output stream closes the pipe and triggers a panic.
+    #[cfg(unix)]
     uucore::panic::mute_sigpipe_panic();
 
     let args = std::env::args().collect::<Vec<String>>();

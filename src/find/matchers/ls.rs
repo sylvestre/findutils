@@ -82,7 +82,7 @@ fn format_permissions(mode: uucore::libc::mode_t) -> String {
     format!("{}{}{}{}", file_type, user_perms, group_perms, other_perms)
 }
 
-#[cfg(windows)]
+#[cfg(not(unix))]
 fn format_permissions(file_attributes: u32) -> String {
     let mut attributes = Vec::new();
 
@@ -195,7 +195,7 @@ impl Ls {
         }
     }
 
-    #[cfg(windows)]
+    #[cfg(not(unix))]
     fn print(
         &self,
         file_info: &WalkEntry,
@@ -203,13 +203,11 @@ impl Ls {
         mut out: impl Write,
         print_error_message: bool,
     ) {
-        use std::os::windows::fs::MetadataExt;
-
         let metadata = file_info.metadata().unwrap();
 
-        let inode_number = 0;
+        let inode_number = 0u64;
+        let size = metadata.len();
         let number_of_blocks = {
-            let size = metadata.file_size();
             let number_of_blocks = size / 1024;
             let remainder = number_of_blocks % 4;
 
@@ -223,11 +221,10 @@ impl Ls {
                 number_of_blocks + (4 - (remainder))
             }
         };
-        let permission = { format_permissions(metadata.file_attributes()) };
-        let hard_links = 0;
+        let permission = format_permissions(0);
+        let hard_links = 0u64;
         let user = 0;
         let group = 0;
-        let size = metadata.file_size();
         let last_modified = {
             let system_time = metadata.modified().unwrap();
             let now_utc: DateTime<chrono::Utc> = system_time.into();
