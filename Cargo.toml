@@ -21,6 +21,7 @@ uucore = { version = "0.9.0", features = ["entries", "fs", "fsext", "mode"] }
 walkdir = "2.5"
 itertools = "0.15.0"
 thiserror = "2.0.12"
+ariadne = "0.6"
 
 [dev-dependencies]
 criterion = { version = "4.7.0", package = "codspeed-criterion-compat" }
