@@ -71,6 +71,7 @@ use std::{
     time::SystemTime,
 };
 
+use super::error::{self, ParseError};
 use super::{Config, Dependencies};
 
 pub use entry::{FileType, WalkEntry, WalkError};
@@ -287,7 +288,7 @@ pub fn build_top_level_matcher(
     args: &[&str],
     config: &mut Config,
 ) -> Result<Box<dyn Matcher>, Box<dyn Error>> {
-    let (_, top_level_matcher) = (build_matcher_tree(args, config, 0, false))?;
+    let (_, top_level_matcher) = (build_matcher_tree(args, config, 0, None))?;
 
     // if the matcher doesn't have any side-effects, then we default to printing
     if !top_level_matcher.has_side_effects() {
@@ -444,15 +445,110 @@ fn get_or_create_file(path: &str) -> Result<File, Box<dyn Error>> {
     Ok(file)
 }
 
+/// Every predicate and operator `build_matcher_tree` accepts, used only to
+/// suggest a correction when the user mistypes one.
+///
+/// The `-newerXY` family is represented by its shorthands; the general form is
+/// generated rather than spelled out, so a typo in it falls back to no
+/// suggestion.
+const KNOWN_PREDICATES: &[&str] = &[
+    "!",
+    "-a",
+    "-amin",
+    "-and",
+    "-anewer",
+    "-atime",
+    "-cmin",
+    "-cnewer",
+    "-ctime",
+    "-d",
+    "-daystart",
+    "-delete",
+    "-depth",
+    "-empty",
+    "-exec",
+    "-execdir",
+    "-executable",
+    "-false",
+    "-files0-from",
+    "-fls",
+    "-follow",
+    "-fprint",
+    "-fprint0",
+    "-fprintf",
+    "-fstype",
+    "-gid",
+    "-group",
+    "-help",
+    "-ilname",
+    "-iname",
+    "-inum",
+    "-ipath",
+    "-iregex",
+    "-iwholename",
+    "-links",
+    "-lname",
+    "-ls",
+    "-maxdepth",
+    "-mindepth",
+    "-mmin",
+    "-mount",
+    "-mtime",
+    "-name",
+    "-newer",
+    "-nogroup",
+    "-noleaf",
+    "-not",
+    "-nouser",
+    "-o",
+    "-ok",
+    "-okdir",
+    "-or",
+    "-path",
+    "-perm",
+    "-print",
+    "-print0",
+    "-printf",
+    "-prune",
+    "-quit",
+    "-readable",
+    "-regex",
+    "-regextype",
+    "-samefile",
+    "-size",
+    "-sorted",
+    "-true",
+    "-type",
+    "-uid",
+    "-user",
+    "-version",
+    "-wholename",
+    "-writable",
+    "-xdev",
+    "-xtype",
+];
+
+/// Turns one of the `logical_matchers` "binary operator with nothing before it"
+/// errors into a diagnostic pointing at the operator.
+fn binary_operator_error(err: &dyn Error, arg_index: usize) -> ParseError {
+    ParseError::new(err.to_string())
+        .at(arg_index)
+        .with_label("no expression before this operator")
+}
+
 /// The main "translate command-line args into a matcher" function. Will call
 /// itself recursively if it encounters an opening bracket. A successful return
 /// consists of a tuple containing the new index into the args array to use (if
 /// called recursively) and the resulting matcher.
+///
+/// `open_bracket` is the index of the '(' this call is parsing the contents of,
+/// or `None` at the top level. It doubles as the "a ')' is expected" flag and
+/// lets an unclosed bracket be pointed at in the error.
 fn build_matcher_tree(
     args: &[&str],
     config: &mut Config,
     arg_index: usize,
-    mut expecting_bracket: bool,
+    mut open_bracket: Option<usize>,
 ) -> Result<(usize, Box<dyn Matcher>), Box<dyn Error>> {
     let mut top_level_matcher = ListMatcherBuilder::new();
 
@@ -470,14 +566,20 @@ fn build_matcher_tree(
             "-print0" => Some(Printer::new(PrintDelimiter::Null, None).into_box()),
             "-printf" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 i += 1;
                 Some(Printf::new(args[i], None)?.into_box())
             }
             "-fprint" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 i += 1;
 
@@ -486,7 +588,10 @@ fn build_matcher_tree(
             }
             "-fprintf" => {
                 if i + 2 >= args.len() {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
 
                 // Action: -fprintf file format
@@ -499,7 +604,10 @@ fn build_matcher_tree(
             }
             "-fprint0" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 i += 1;
 
@@ -509,7 +617,10 @@ fn build_matcher_tree(
             "-ls" => Some(Ls::new(None).into_box()),
             "-fls" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 i += 1;
 
@@ -520,21 +631,30 @@ fn build_matcher_tree(
             "-false" => Some(FalseMatcher.into_box()),
             "-lname" | "-ilname" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 i += 1;
                 Some(LinkNameMatcher::new(args[i], args[i - 1].starts_with("-i")).into_box())
             }
             "-name" | "-iname" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 i += 1;
                 Some(NameMatcher::new(args[i], args[i - 1].starts_with("-i")).into_box())
             }
             "-path" | "-ipath" | "-wholename" | "-iwholename" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 i += 1;
                 Some(PathMatcher::new(args[i], args[i - 1].starts_with("-i")).into_box())
@@ -542,7 +662,10 @@ fn build_matcher_tree(
             "-readable" => Some(AccessMatcher::Readable.into_box()),
             "-regextype" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 i += 1;
                 regex_type = regex::RegexType::from_str(args[i])?;
@@ -550,35 +673,50 @@ fn build_matcher_tree(
             }
             "-regex" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 i += 1;
                 Some(RegexMatcher::new(regex_type, args[i], false)?.into_box())
             }
             "-iregex" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 i += 1;
                 Some(RegexMatcher::new(regex_type, args[i], true)?.into_box())
             }
             "-type" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 i += 1;
                 Some(TypeMatcher::new(args[i])?.into_box())
             }
             "-xtype" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 i += 1;
                 Some(XtypeMatcher::new(args[i])?.into_box())
             }
             "-fstype" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 i += 1;
                 Some(FileSystemMatcher::new(args[i].to_string()).into_box())
@@ -590,14 +728,20 @@ fn build_matcher_tree(
             }
             "-newer" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 i += 1;
                 Some(NewerMatcher::new(args[i], config.follow)?.into_box())
             }
             "-mtime" | "-atime" | "-ctime" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 let file_time_type = match args[i] {
                     "-atime" => FileTimeType::Accessed,
@@ -613,7 +757,10 @@ fn build_matcher_tree(
             }
             "-amin" | "-cmin" | "-mmin" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 let file_time_type = match args[i] {
                     "-amin" => FileTimeType::Accessed,
@@ -630,7 +777,10 @@ fn build_matcher_tree(
             }
             "-size" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 let (size, unit) =
                     convert_arg_to_comparable_value_and_suffix(args[i], args[i + 1])?;
@@ -654,7 +804,10 @@ fn build_matcher_tree(
                 if arg_index < i + required_arg || arg_index == args.len() {
                     // at the minimum we need the executable and the ';'
                     // or the executable and the '{} +'
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 let expression = args[i];
                 let executable = args[i + 1];
@@ -694,7 +847,10 @@ fn build_matcher_tree(
                 }
                 if arg_index < i + 2 || arg_index == args.len() {
                     // Need at least the executable and the terminating ';'.
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 let expression = args[i];
                 let executable = args[i + 1];
@@ -712,7 +868,10 @@ fn build_matcher_tree(
             #[cfg(unix)]
             "-inum" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 let inum = convert_arg_to_comparable_value(args[i], args[i + 1])?;
                 i += 1;
@@ -727,7 +886,10 @@ fn build_matcher_tree(
             #[cfg(unix)]
             "-links" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 let inum = convert_arg_to_comparable_value(args[i], args[i + 1])?;
                 i += 1;
@@ -739,7 +901,10 @@ fn build_matcher_tree(
             }
             "-samefile" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 i += 1;
                 let path = args[i];
@@ -749,7 +914,10 @@ fn build_matcher_tree(
             }
             "-user" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
 
                 let user = args[i + 1];
@@ -769,7 +937,10 @@ fn build_matcher_tree(
             "-nouser" => Some(NoUserMatcher {}.into_box()),
             "-uid" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 // check if the argument is a number
                 let uid = convert_arg_to_comparable_value(args[i], args[i + 1])?;
@@ -778,7 +949,10 @@ fn build_matcher_tree(
             }
             "-group" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
 
                 let group = args[i + 1];
@@ -800,7 +974,10 @@ fn build_matcher_tree(
             "-nogroup" => Some(NoGroupMatcher {}.into_box()),
             "-gid" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 // check if the argument is a number
                 let gid = convert_arg_to_comparable_value(args[i], args[i + 1])?;
@@ -810,7 +987,10 @@ fn build_matcher_tree(
             "-executable" => Some(AccessMatcher::Executable.into_box()),
             "-perm" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 i += 1;
                 Some(PermMatcher::new(args[i])?.into_box())
@@ -820,61 +1000,86 @@ fn build_matcher_tree(
             "-writable" => Some(AccessMatcher::Writable.into_box()),
             "-not" | "!" => {
                 if !are_more_expressions(args, i) {
-                    return Err(From::from(format!(
+                    return Err(ParseError::new(format!(
                         "expected an expression after {}",
                         args[i]
-                    )));
+                    ))
+                    .at(i)
+                    .with_label("nothing follows this operator")
+                    .into());
                 }
                 invert_next_matcher = !invert_next_matcher;
                 None
             }
             "-and" | "-a" => {
                 if !are_more_expressions(args, i) {
-                    return Err(From::from(format!(
+                    return Err(ParseError::new(format!(
                         "expected an expression after {}",
                         args[i]
-                    )));
+                    ))
+                    .at(i)
+                    .with_label("nothing follows this operator")
+                    .into());
                 }
-                top_level_matcher.check_new_and_condition()?;
+                top_level_matcher
+                    .check_new_and_condition()
+                    .map_err(|e| binary_operator_error(e.as_ref(), i))?;
                 None
             }
             "-or" | "-o" => {
                 if !are_more_expressions(args, i) {
-                    return Err(From::from(format!(
+                    return Err(ParseError::new(format!(
                         "expected an expression after {}",
                         args[i]
-                    )));
+                    ))
+                    .at(i)
+                    .with_label("nothing follows this operator")
+                    .into());
                 }
-                top_level_matcher.new_or_condition(args[i])?;
+                top_level_matcher
+                    .new_or_condition(args[i])
+                    .map_err(|e| binary_operator_error(e.as_ref(), i))?;
                 None
             }
             "," => {
                 if !are_more_expressions(args, i) {
-                    return Err(From::from(format!(
+                    return Err(ParseError::new(format!(
                         "expected an expression after {}",
                         args[i]
-                    )));
+                    ))
+                    .at(i)
+                    .with_label("nothing follows this operator")
+                    .into());
                 }
-                top_level_matcher.new_list_condition()?;
+                top_level_matcher
+                    .new_list_condition()
+                    .map_err(|e| binary_operator_error(e.as_ref(), i))?;
                 None
             }
             "(" => {
-                let (new_arg_index, sub_matcher) = build_matcher_tree(args, config, i + 1, true)?;
+                let (new_arg_index, sub_matcher) =
+                    build_matcher_tree(args, config, i + 1, Some(i))?;
                 i = new_arg_index;
                 Some(sub_matcher)
             }
             ")" => {
-                if !expecting_bracket {
-                    return Err(From::from(
+                let Some(open_bracket_index) = open_bracket else {
+                    return Err(ParseError::new(
                         "invalid expression: expected expression before closing parentheses ')'.",
-                    ));
-                }
+                    )
+                    .at(i)
+                    .with_label("no matching '(' before this")
+                    .into());
+                };
 
                 let bracket = args[i - 1];
                 if bracket == "(" {
-                    return Err(From::from(
+                    return Err(ParseError::new(
                         "invalid expression; empty parentheses are not allowed.",
-                    ));
+                    )
+                    .at(open_bracket_index)
+                    .with_label("nothing between these parentheses")
+                    .into());
                 }
 
                 return Ok((i, top_level_matcher.build()));
@@ -920,7 +1125,10 @@ fn build_matcher_tree(
             }
             "-maxdepth" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 config.max_depth = convert_arg_to_number(args[i], args[i + 1])?;
                 i += 1;
@@ -928,7 +1136,10 @@ fn build_matcher_tree(
             }
             "-mindepth" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 config.min_depth = convert_arg_to_number(args[i], args[i + 1])?;
                 i += 1;
@@ -944,7 +1155,10 @@ fn build_matcher_tree(
             }
             "-files0-from" => {
                 if i >= args.len() - 1 {
-                    return Err(From::from(format!("missing argument to {}", args[i])));
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
                 }
                 let _ = config.files0_argument.insert(args[i + 1].to_string());
                 i += 1;
@@ -952,47 +1166,51 @@ fn build_matcher_tree(
             }
 
             _ => {
-                match parse_str_to_newer_args(args[i]) {
-                    Some((x_option, y_option)) => {
-                        if i >= args.len() - 1 {
-                            return Err(From::from(format!("missing argument to {}", args[i])));
-                        }
-                        #[cfg(target_os = "linux")]
-                        if x_option == "B" {
-                            return Err(From::from("This system does not provide a way to find the birth time of a file."));
-                        }
-                        if y_option == "t" {
-                            let time = args[i + 1];
-                            let newer_time_type = NewerOptionType::from_str(x_option.as_str());
-                            // Convert args to unix timestamps. (expressed in numeric types)
-                            let Some(comparable_time) = parse_date_str_to_timestamps(time) else {
-                                return Err(From::from(format!(
-                                    "I cannot figure out how to interpret ‘{}’ as a date or time",
-                                    args[i + 1]
-                                )));
-                            };
-                            i += 1;
-                            Some(NewerTimeMatcher::new(newer_time_type, comparable_time).into_box())
-                        } else {
-                            let file_path = args[i + 1];
-                            i += 1;
-                            Some(
-                                NewerOptionMatcher::new(&x_option, &y_option, file_path)?
-                                    .into_box(),
-                            )
-                        }
+                // Match GNU find wording for unknown predicates.
+                let Some((x_option, y_option)) = parse_str_to_newer_args(args[i]) else {
+                    let mut err = ParseError::new(format!("unknown predicate `{}'", args[i]))
+                        .at(i)
+                        .with_label("not a known predicate");
+                    if let Some(suggestion) = error::closest_match(args[i], KNOWN_PREDICATES) {
+                        err = err.with_help(format!("did you mean `{suggestion}'?"));
                     }
-                    // Match GNU find wording for unknown predicates.
-                    None => {
-                        return Err(From::from(format!("unknown predicate `{}'", args[i])));
-                    }
+                    return Err(err.into());
+                };
+                if i >= args.len() - 1 {
+                    return Err(ParseError::new(format!("missing argument to {}", args[i]))
+                        .at(i)
+                        .with_label("this predicate needs an argument")
+                        .into());
+                }
+                #[cfg(target_os = "linux")]
+                if x_option == "B" {
+                    return Err(From::from(
+                        "This system does not provide a way to find the birth time of a file.",
+                    ));
+                }
+                if y_option == "t" {
+                    let time = args[i + 1];
+                    let newer_time_type = NewerOptionType::from_str(x_option.as_str());
+                    // Convert args to unix timestamps. (expressed in numeric types)
+                    let Some(comparable_time) = parse_date_str_to_timestamps(time) else {
+                        return Err(From::from(format!(
+                            "I cannot figure out how to interpret ‘{}’ as a date or time",
+                            args[i + 1]
+                        )));
+                    };
+                    i += 1;
+                    Some(NewerTimeMatcher::new(newer_time_type, comparable_time).into_box())
+                } else {
+                    let file_path = args[i + 1];
+                    i += 1;
+                    Some(NewerOptionMatcher::new(&x_option, &y_option, file_path)?.into_box())
                 }
             }
         };
         i += 1;
         if config.help_requested || config.version_requested {
             // Ignore anything, even invalid expressions, after -help/-version
-            expecting_bracket = false;
+            open_bracket = None;
             break;
         }
         if let Some(submatcher) = possible_submatcher {
@@ -1004,11 +1222,14 @@ fn build_matcher_tree(
             }
         }
     }
-    if expecting_bracket {
-        return Err(From::from(
+    if let Some(open_bracket_index) = open_bracket {
+        return Err(ParseError::new(
             "invalid expression; I was expecting to find a ')' somewhere but \
              did not see one.",
-        ));
+        )
+        .at(open_bracket_index)
+        .with_label("this parenthesis is never closed")
+        .into());
     }
     if config.files0_argument.is_some() {
         parse_files0_args(config)?;
@@ -1907,6 +2128,72 @@ mod tests {
         match build_top_level_matcher(&["-notarealpredicate"], &mut config) {
             Ok(_) => panic!("unknown predicates must be rejected"),
             Err(err) => assert_eq!(err.to_string(), "unknown predicate `-notarealpredicate'"),
+        }
+    }
+
+    /// Parses `args`, expecting a failure, and returns the index of the
+    /// argument the resulting diagnostic points at.
+    fn failing_arg_index(args: &[&str]) -> Option<usize> {
+        let mut config = Config::default();
+        let err = build_top_level_matcher(args, &mut config)
+            .err()
+            .expect("expression should have been rejected");
+        err.downcast_ref::<ParseError>()
+            .expect("expression errors should carry an argument index")
+            .arg_index()
+    }
+
+    #[test]
+    fn expression_errors_point_at_the_offending_argument() {
+        // The predicate that is missing its argument, not the end of the list.
+        assert_eq!(failing_arg_index(&["-true", "-a", "-name"]), Some(2));
+        // The mistyped predicate.
+        assert_eq!(failing_arg_index(&["-true", "-o", "-nmae", "x"]), Some(2));
+        // The operator with nothing after it.
+        assert_eq!(failing_arg_index(&["-true", "-o"]), Some(1));
+        // The operator with nothing before it.
+        assert_eq!(failing_arg_index(&["-o", "-true"]), Some(0));
+        assert_eq!(failing_arg_index(&[",", "-true"]), Some(0));
+        // The '(' that is never closed, rather than the end of the list.
+        assert_eq!(failing_arg_index(&["-true", "(", "-false"]), Some(1));
+        // The '(' of the empty pair, rather than its ')'.
+        assert_eq!(failing_arg_index(&["-true", "(", ")"]), Some(1));
+        // The ')' that has no opener.
+        assert_eq!(failing_arg_index(&["-true", ")"]), Some(1));
+    }
+
+    #[test]
+    fn unknown_predicates_suggest_a_close_match() {
+        let mut config = Config::default();
+        let err = build_top_level_matcher(&["-nmae", "x"], &mut config)
+            .err()
+            .expect("typo should have been rejected");
+        // The suggestion travels as help text, leaving the message GNU-compatible.
+        assert_eq!(err.to_string(), "unknown predicate `-nmae'");
+        let mut rendered = Vec::new();
+        err.downcast_ref::<ParseError>().unwrap().render(
+            &["find", "-nmae", "x"],
+            false,
+            &mut rendered,
+        );
+        assert!(String::from_utf8(rendered)
+            .unwrap()
+            .contains("did you mean `-name'?"));
+    }
+
+    #[test]
+    fn known_predicates_are_all_recognised() {
+        // Guards against `KNOWN_PREDICATES` drifting away from the parser and
+        // producing suggestions for names that no longer exist, or missing ones
+        // that do.
+        for predicate in KNOWN_PREDICATES {
+            let mut config = Config::default();
+            if let Err(err) = build_top_level_matcher(&[predicate], &mut config) {
+                assert!(
+                    !err.to_string().starts_with("unknown predicate"),
+                    "{predicate} is listed as known but the parser rejects it"
+                );
+            }
         }
     }
 

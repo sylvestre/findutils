@@ -7,10 +7,10 @@
 pub mod error;
 pub mod matchers;
 
+use error::ParseError;
 use matchers::{Follow, WalkEntry};
 use std::cell::RefCell;
 use std::error::Error;
-#[cfg(unix)]
 use std::io::IsTerminal;
 use std::io::{self, stderr, stdout, BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -187,7 +187,11 @@ fn parse_args(args: &[&str]) -> Result<ParsedInfo, Box<dyn Error>> {
     if i == paths_start {
         paths.push(".".to_string());
     }
-    let matcher = matchers::build_top_level_matcher(&args[i..], &mut config)?;
+    // The matcher builder only sees the expression part of the command line, so
+    // any argument index it reports has to be moved back to where that part
+    // started.
+    let matcher = matchers::build_top_level_matcher(&args[i..], &mut config)
+        .map_err(|e| ParseError::shift(e, i))?;
     if let Some(new_paths) = &config.new_paths {
         if paths.len() == 1 && paths[0] == "." {
             paths.clone_from(new_paths);
@@ -423,7 +427,22 @@ pub fn find_main(args: &[&str], deps: &dyn Dependencies) -> i32 {
     match do_find(&args[1..], deps) {
         Ok(ret) => ret,
         Err(e) => {
-            writeln!(&mut stderr(), "find: {e}").unwrap();
+            // `do_find` was handed argv without the program name.
+            let e = ParseError::shift(e, 1);
+            let mut stderr = stderr();
+            let rendered = error::diagnostics_enabled()
+                && e.downcast_ref::<ParseError>().is_some_and(|parse_error| {
+                    // Colour is a property of the terminal; the diagnostic
+                    // itself was explicitly asked for and is shown either way.
+                    let colored = stderr.is_terminal()
+                        && std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty());
+                    parse_error.render(args, colored, &mut stderr)
+                });
+            // The rendered report already leads with the `find: <message>`
+            // line, so only print it here when there was no report.
+            if !rendered {
+                writeln!(&mut stderr, "find: {e}").unwrap();
+            }
             1
         }
     }

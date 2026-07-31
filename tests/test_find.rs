@@ -100,6 +100,39 @@ fn invalid_newerxy_predicate_is_rejected() {
 }
 
 #[test]
+fn expression_diagnostics_are_off_by_default() {
+    // Without UU_DIAG the error must stay the single GNU-compatible line, so
+    // that scripts and the compatibility testsuites see no change.
+    let output = ucmd()
+        .args(&["-true", "-o", "-nmae", "x"])
+        .fails()
+        .no_stdout()
+        .stderr_str()
+        .to_owned();
+    assert_eq!(output.trim_end(), "find: unknown predicate `-nmae'");
+}
+
+#[test]
+fn expression_diagnostics_underline_the_bad_argument() {
+    let output = ucmd()
+        .args(&["-true", "-o", "-nmae", "x"])
+        .env("UU_DIAG", "1")
+        .fails()
+        .no_stdout()
+        .stderr_str()
+        .to_owned();
+
+    // The plain message still leads, so nothing that matched before stops
+    // matching.
+    assert!(output.starts_with("find: unknown predicate `-nmae'\n"));
+    assert!(output.contains("-true -o -nmae x"));
+    assert!(output.contains("not a known predicate"));
+    assert!(output.contains("did you mean `-name'?"));
+    // Piped output must not be coloured.
+    assert!(!output.contains('\u{1b}'));
+}
+
+#[test]
 fn multiple_matcher_failure() {
     ucmd()
         .args(&["-type", "fd", "-name", "abbb"])
