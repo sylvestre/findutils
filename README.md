@@ -9,6 +9,29 @@
 Rust implementation of [GNU findutils](https://www.gnu.org/software/findutils/): `xargs`, `find`, `locate` and `updatedb`.
 The goal is to be a full drop-in replacement of the original commands.
 
+## Expression diagnostics
+
+`find` expressions get long, and a plain `find: unknown predicate '-nmae'` does not
+say *where* in the expression the problem is. Setting `UU_DIAG` to a non-empty value
+(other than `0`) makes `find` underline the offending argument:
+
+```
+$ UU_DIAG=1 find /srv -type f -a \( -name '*.rs' -o -nmae '*.toml' \) -print
+find: unknown predicate `-nmae'
+   ╭─[ command line:1:47 ]
+   │
+ 1 │ find /srv -type f -a '(' -name '*.rs' -o -nmae '*.toml' ')' -print
+   │                                          ──┬──
+   │                                            ╰──── not a known predicate
+   │
+   │ Help: did you mean `-name'?
+───╯
+```
+
+This is off by default, so the usual output stays byte-for-byte compatible with GNU
+`find`. Colour follows the [`NO_COLOR`](https://no-color.org) convention and is only
+used when stderr is a terminal.
+
 ## Run the GNU testsuite on rust/findutils:
 
 ```
