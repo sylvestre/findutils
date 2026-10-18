@@ -210,7 +210,7 @@ impl TryFrom<ArgMatches> for ParsedInfo {
             basename: value.get_flag("basename"),
             db: value
                 .get_one::<String>("database")
-                .map_or_else(Vec::new, |s| std::env::split_paths(s).collect()),
+                .map_or_else(Vec::new, |s| crate::split_paths(s.as_ref())),
 
             mode: value
                 .get_many::<Id>("mode")
